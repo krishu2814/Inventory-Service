@@ -1,17 +1,18 @@
 import InventoryRepository from "../repository/inventory-repository.js";
+import ProductClient from "../clients/product-client.js";
+import mongoose from "mongoose";
 
 class InventoryService {
   constructor() {
     this.inventoryRepository = new InventoryRepository();
+    this.productClient = new ProductClient();
   }
 
   // CREATE INVENTORY
 
   async createInventory(data) {
     try {
-      if (!data.productId) {
-        throw new Error("Product ID is required");
-      }
+      this.validateProductId(data.productId);
 
       if (
         data.quantity === undefined ||
@@ -20,6 +21,8 @@ class InventoryService {
       ) {
         throw new Error("Quantity must be a non-negative integer");
       }
+
+      await this.productClient.getProductById(data.productId);
 
       const existingInventory =
         await this.inventoryRepository.getInventoryByProductId(data.productId);
@@ -44,9 +47,8 @@ class InventoryService {
   // GET INVENTORY
   async getInventoryByProductId(productId) {
     try {
-      if (!productId) {
-        throw new Error("Product ID is required");
-      }
+      // validate productId
+      this.validateProductId(productId);
 
       const inventory =
         await this.inventoryRepository.getInventoryByProductId(productId);
@@ -154,6 +156,10 @@ class InventoryService {
   validateProductId(productId) {
     if (!productId) {
       throw new Error("Product ID is required");
+    }
+
+    if (!mongoose.Types.ObjectId.isValid(productId)) {
+      throw new Error("Invalid Product ID");
     }
   }
 
