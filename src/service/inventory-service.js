@@ -1,11 +1,13 @@
 import InventoryRepository from "../repository/inventory-repository.js";
 import ProductClient from "../clients/product-client.js";
+import OrderClient from "../clients/order-client.js";
 import mongoose from "mongoose";
 
 class InventoryService {
   constructor() {
     this.inventoryRepository = new InventoryRepository();
     this.productClient = new ProductClient();
+    this.orderClient = new OrderClient();
   }
 
   // CREATE INVENTORY

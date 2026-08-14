@@ -2,39 +2,37 @@ import axios from "axios";
 import { env } from "../config/serverConfig.js";
 
 class ProductClient {
-  constructor() {
-    this.client = axios.create({
-      baseURL: env.PRODUCT_SERVICE_URL,
-      timeout: 5000,
-    });
-  }
-
-  async getProductById(productId) {
+  async getProductById(productId, authorization) {
     try {
-      const response = await this.client.get(`/api/v1/products/${productId}`);
-
-      if (!response.data?.success) {
-        throw new Error("Product not found");
+      if (!authorization) {
+        throw new Error("Authorization header is missing or invalid");
       }
+
+      const response = await axios.get(
+        `${env.PRODUCT_SERVICE_URL}/api/v1/products/${productId}`,
+        {
+          headers: {
+            Authorization: authorization,
+          },
+        },
+      );
 
       return response.data.data;
     } catch (error) {
+      console.error(
+        "Product Service error:",
+        error.response?.data || error.message,
+      );
+
       if (error.response?.status === 404) {
         throw new Error("Product not found");
       }
 
-      if (error.code === "ECONNREFUSED") {
-        throw new Error("Product Service is unavailable");
+      if (error.response?.status === 401) {
+        throw new Error("Unauthorized request to Product Service");
       }
 
-      if (error.code === "ECONNABORTED") {
-        throw new Error("Product Service request timed out");
-      }
-
-      throw new Error(
-        error.response?.data?.message ||
-          "Failed to communicate with Product Service",
-      );
+      throw new Error("Product Service is unavailable");
     }
   }
 }
