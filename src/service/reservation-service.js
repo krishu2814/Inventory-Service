@@ -1,71 +1,232 @@
 import ReservationRepository from "../repository/reservation-repository.js";
 import ProductClient from "../clients/product-client.js";
+import OrderClient from "../clients/order-client.js";
 import InventoryRepository from "../repository/inventory-repository.js";
 import mongoose from "mongoose";
+import { publishEvent } from "../config/rabbitmq.js";
 
 class ReservationService {
   constructor() {
     this.reservationRepository = new ReservationRepository();
     this.productClient = new ProductClient();
+    this.orderClient = new OrderClient();
     this.inventoryRepository = new InventoryRepository();
   }
 
-  // CREATE RESERVATION
-  async createReservation(data, authorization) {
-    try {
-      this.validateProductId(data.productId);
-      this.validateOrderId(data.orderId);
-      this.validateUserId(data.userId);
-      this.validateQuantity(data.quantity);
+  async processOrderCreatedEvent(data) {
+    if (!data) {
+      throw new Error("ORDER_CREATED event data is required");
+    }
 
-      if (!authorization) {
-        throw new Error("Authorization header is required");
+    this.validateOrderId(data.orderId);
+    this.validateUserId(data.userId);
+
+    if (!Array.isArray(data.items) || data.items.length === 0) {
+      throw new Error("Order must contain at least one item");
+    }
+
+    const createdReservations = [];
+
+    try {
+      for (const item of data.items) {
+        if (!item.productId) {
+          throw new Error("Product ID is required");
+        }
+
+        const quantity = Number(item.quantity);
+
+        this.validateProductId(item.productId);
+        this.validateQuantity(quantity);
+
+        // console.log(`Reserving ${quantity} units of ${item.productId}`);
+
+        const reservation = await this.createReservationFromOrderEvent({
+          productId: String(item.productId),
+          orderId: String(data.orderId),
+          userId: String(data.userId),
+          quantity,
+        });
+
+        createdReservations.push(reservation);
       }
 
-      /*
-       * 1. Validate Product
-       *
-       * Inventory Service does not own product information.
-       * Therefore it asks Product Service.
-       *
-       * JWT is forwarded to Product Service.
-       */
-      const product = await this.productClient.getProductById(
-        data.productId,
-        authorization,
+      await publishEvent("INVENTORY_RESERVED", {
+        event: "INVENTORY_RESERVED",
+        orderId: String(data.orderId),
+        userId: String(data.userId),
+        reservations: createdReservations,
+        timestamp: new Date().toISOString(),
+      });
+
+      // console.log(`Inventory successfully reserved for order ${data.orderId}`);
+
+      return createdReservations;
+    } catch (error) {
+      console.error(
+        `Inventory reservation failed for order ${data.orderId}:`,
+        error.message,
       );
 
-      if (!product) {
-        throw new Error("Product not found");
+      // Release reservations created during this transaction.
+      for (const reservation of createdReservations) {
+        try {
+          await this.releaseReservation(reservation.id);
+
+          // console.log(
+          //   `Compensation successful for reservation ${reservation.id}`,
+          // );
+        } catch (releaseError) {
+          console.error(
+            `Failed to compensate reservation ${reservation.id}:`,
+            releaseError.message,
+          );
+        }
       }
 
-      /*
-       * 2. Check whether reservation already exists
-       *
-       * Prevent duplicate reservation for same order/product.
-       */
-      const existingReservation =
-        await this.reservationRepository.findByOrderId(data.orderId);
+      try {
+        await publishEvent("INVENTORY_FAILED", {
+          event: "INVENTORY_FAILED",
+          orderId: String(data.orderId),
+          userId: String(data.userId),
+          reason: error.message,
+          timestamp: new Date().toISOString(),
+        });
 
-      if (existingReservation) {
-        throw new Error("Reservation already exists for this order");
+        // console.log(`INVENTORY_FAILED published for order ${data.orderId}`);
+      } catch (publishError) {
+        console.error(
+          "Failed to publish INVENTORY_FAILED:",
+          publishError.message,
+        );
+
+        throw publishError;
       }
 
-      /*
-       * 3. Reserve physical inventory
-       */
-      const inventory = await this.inventoryRepository.reserveStock(
-        data.productId,
-        data.quantity,
+      return null;
+    }
+  }
+
+  async confirmReservationsByOrderId(orderId) {
+    this.validateOrderId(orderId);
+
+    const reservations =
+      await this.reservationRepository.findAllByOrderId(orderId);
+
+    if (!reservations.length) {
+      throw new Error(`No reservations found for order ${orderId}`);
+    }
+
+    const confirmedReservations = [];
+
+    for (const reservation of reservations) {
+      // Idempotency
+      if (reservation.status === "CONFIRMED") {
+        confirmedReservations.push(this.formatReservation(reservation));
+        continue;
+      }
+
+      if (reservation.status !== "RESERVED") {
+        throw new Error(
+          `Cannot confirm reservation with status ${reservation.status}`,
+        );
+      }
+
+      const inventory = await this.inventoryRepository.confirmStock(
+        reservation.productId,
+        reservation.quantity,
       );
 
       if (!inventory) {
-        throw new Error("Insufficient stock or inventory not found");
+        throw new Error(
+          `Unable to confirm inventory for product ${reservation.productId}`,
+        );
       }
 
-      /*
-       * 4. Create reservation record
-       */
+      const updatedReservation = await this.reservationRepository.updateStatus(
+        reservation._id,
+        "CONFIRMED",
+      );
+
+      confirmedReservations.push(this.formatReservation(updatedReservation));
+    }
+
+    return confirmedReservations;
+  }
+
+  async createReservation(data, authorization) {
+    this.validateReservationData(data);
+
+    const product = await this.productClient.getProductById(
+      data.productId,
+      authorization,
+    );
+
+    if (!product) {
+      throw new Error("Product not found");
+    }
+
+    const order = await this.orderClient.getOrderById(
+      data.orderId,
+      authorization,
+    );
+
+    if (!order) {
+      throw new Error("Order not found");
+    }
+
+    if (String(order.userId) !== String(data.userId)) {
+      throw new Error("Order does not belong to this user");
+    }
+
+    const orderItem = order.items?.find(
+      (item) => String(item.productId) === String(data.productId),
+    );
+
+    if (!orderItem) {
+      throw new Error("Product does not belong to this order");
+    }
+
+    if (data.quantity > orderItem.quantity) {
+      throw new Error("Reservation quantity cannot exceed ordered quantity");
+    }
+
+    return this.reserveInventory(data);
+  }
+
+  async createReservationFromOrderEvent(data) {
+    this.validateReservationData(data);
+
+    return this.reserveInventory(data);
+  }
+
+  async reserveInventory(data) {
+    const existingReservation =
+      await this.reservationRepository.findByOrderIdAndProductId(
+        data.orderId,
+        data.productId,
+      );
+
+    // RabbitMQ may deliver the same ORDER_CREATED event more than once.
+    if (existingReservation) {
+      // console.log(
+      //   `Reservation already exists for order ${data.orderId}, product ${data.productId}`,
+      // );
+
+      return this.formatReservation(existingReservation);
+    }
+
+    const inventory = await this.inventoryRepository.reserveStock(
+      data.productId,
+      data.quantity,
+    );
+
+    if (!inventory) {
+      throw new Error(
+        `Insufficient stock or inventory not found for product ${data.productId}`,
+      );
+    }
+
+    try {
       const reservation = await this.reservationRepository.createReservation({
         productId: data.productId,
         orderId: data.orderId,
@@ -76,40 +237,33 @@ class ReservationService {
 
       return this.formatReservation(reservation);
     } catch (error) {
-      console.error("Error creating reservation:", error);
+      // Reservation creation failed after inventory was reserved.
+      await this.inventoryRepository.releaseStock(
+        data.productId,
+        data.quantity,
+      );
 
       throw error;
     }
   }
 
-  // GET BY RESERVATION ID
   async getReservationById(reservationId) {
     this.validateObjectId(reservationId, "Reservation ID");
 
     const reservation =
       await this.reservationRepository.findById(reservationId);
 
-    if (!reservation) {
-      return null;
-    }
-
-    return this.formatReservation(reservation);
+    return reservation ? this.formatReservation(reservation) : null;
   }
 
-  // GET BY ORDER ID
   async getReservationByOrderId(orderId) {
     this.validateObjectId(orderId, "Order ID");
 
     const reservation = await this.reservationRepository.findByOrderId(orderId);
 
-    if (!reservation) {
-      return null;
-    }
-
-    return this.formatReservation(reservation);
+    return reservation ? this.formatReservation(reservation) : null;
   }
 
-  // GET BY USER ID
   async getReservationsByUserId(userId) {
     this.validateObjectId(userId, "User ID");
 
@@ -120,7 +274,6 @@ class ReservationService {
     );
   }
 
-  // CONFIRM RESERVATION
   async confirmReservation(reservationId) {
     this.validateObjectId(reservationId, "Reservation ID");
 
@@ -129,6 +282,11 @@ class ReservationService {
 
     if (!reservation) {
       throw new Error("Reservation not found");
+    }
+
+    // Idempotency
+    if (reservation.status === "CONFIRMED") {
+      return this.formatReservation(reservation);
     }
 
     if (reservation.status !== "RESERVED") {
@@ -154,7 +312,6 @@ class ReservationService {
     return this.formatReservation(updatedReservation);
   }
 
-  // RELEASE RESERVATION
   async releaseReservation(reservationId) {
     this.validateObjectId(reservationId, "Reservation ID");
 
@@ -163,6 +320,11 @@ class ReservationService {
 
     if (!reservation) {
       throw new Error("Reservation not found");
+    }
+
+    // Idempotency
+    if (reservation.status === "RELEASED") {
+      return this.formatReservation(reservation);
     }
 
     if (reservation.status !== "RESERVED") {
@@ -188,7 +350,6 @@ class ReservationService {
     return this.formatReservation(updatedReservation);
   }
 
-  // CANCEL RESERVATION
   async cancelReservation(reservationId) {
     this.validateObjectId(reservationId, "Reservation ID");
 
@@ -199,16 +360,25 @@ class ReservationService {
       throw new Error("Reservation not found");
     }
 
+    // Idempotency
+    if (reservation.status === "CANCELLED") {
+      return this.formatReservation(reservation);
+    }
+
     if (reservation.status !== "RESERVED") {
       throw new Error(
         `Cannot cancel reservation with status ${reservation.status}`,
       );
     }
 
-    await this.inventoryRepository.releaseStock(
+    const inventory = await this.inventoryRepository.releaseStock(
       reservation.productId,
       reservation.quantity,
     );
+
+    if (!inventory) {
+      throw new Error("Unable to release reserved inventory");
+    }
 
     const updatedReservation = await this.reservationRepository.updateStatus(
       reservationId,
@@ -218,7 +388,17 @@ class ReservationService {
     return this.formatReservation(updatedReservation);
   }
 
-  // VALIDATION
+  validateReservationData(data) {
+    if (!data) {
+      throw new Error("Reservation data is required");
+    }
+
+    this.validateProductId(data.productId);
+    this.validateOrderId(data.orderId);
+    this.validateUserId(data.userId);
+    this.validateQuantity(data.quantity);
+  }
+
   validateProductId(productId) {
     this.validateObjectId(productId, "Product ID");
   }

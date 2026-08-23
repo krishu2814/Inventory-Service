@@ -28,6 +28,7 @@ router.post(
 );
 
 // Confirm reserved stock
+// manual testing/debugging in Postman to simulate what happens after a successful payment.
 router.post(
   "/:productId/confirm",
   inventoryController.confirmStock.bind(inventoryController),

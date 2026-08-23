@@ -3,13 +3,13 @@ import mongoose from "mongoose";
 const reservationSchema = new mongoose.Schema(
   {
     productId: {
-      type: mongoose.Schema.Types.ObjectId,
+      type: String,
       required: true,
       index: true,
     },
 
     orderId: {
-      type: mongoose.Schema.Types.ObjectId,
+      type: String,
       required: true,
       index: true,
     },
@@ -45,6 +45,7 @@ reservationSchema.index(
   },
   {
     unique: true,
+    name: "unique_order_product_reservation",
   },
 );
 

@@ -2,10 +2,19 @@ import axios from "axios";
 import { env } from "../config/serverConfig.js";
 
 class OrderClient {
-  async getOrderById(orderId) {
+  async getOrderById(orderId, authorization) {
     try {
+      const config = {};
+
+      if (authorization) {
+        config.headers = {
+          Authorization: authorization,
+        };
+      }
+
       const response = await axios.get(
-        `${env.ORDER_SERVICE_URL}/api/v1/orders/${orderId}`,
+        `${env.ORDER_SERVICE_URL}/api/v1/${orderId}`,
+        config,
       );
 
       return response.data.data;

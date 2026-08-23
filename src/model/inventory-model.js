@@ -3,7 +3,7 @@ import mongoose from "mongoose";
 const inventorySchema = new mongoose.Schema(
   {
     productId: {
-      type: mongoose.Schema.Types.ObjectId,
+      type: String,
       required: true,
       unique: true,
       index: true,

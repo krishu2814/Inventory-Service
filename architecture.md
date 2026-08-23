@@ -1,65 +1,44 @@
-                         API Gateway
-                              │
-              ┌───────────────┼───────────────┐
-              │               │               │
-              ▼               ▼               ▼
-       Product Service   Order Service   Payment Service
-              │               │               │
-              │               │               │
-              │          Reserve Stock         │
-              │               │               │
-              └───────────────┼───────────────┘
-                              ▼
-                    ┌──────────────────┐
-                    │ Inventory Service│
-                    │      :5016       │
-                    └────────┬─────────┘
-                             │
-                    ┌────────┴────────┐
-                    │                 │
-                    ▼                 ▼
-                Inventory        Reservations
-                  Model              Model
-                    │                 │
-                    └────────┬────────┘
-                             ▼
-                          MongoDB
-                             │
-                             ▼
-                          RabbitMQ
-                             │
-              ┌──────────────┼──────────────┐
-              ▼              ▼              ▼
-          Notifications   Analytics      Other Services
+## High-Level Architecture
 
-<!-- valid architecture for reserving products -->
-
-                 Reservation Request
-                         │
-                         ▼
-                Inventory Service
-                         │
-              ┌──────────┴──────────┐
-              │                     │
-              ▼                     ▼
-       Product Service         Order Service
-       "Does product exist?"   "Does order exist?"
-              │                     │
-              ▼                     ▼
-            Valid?               Valid?
-              │                     │
-              └──────────┬──────────┘
-                         ▼
-                 Validate Order Item
-                         │
-              Does order contain
-                this product?
-                         │
-                         ▼
-                 Check quantity
-                         │
-                         ▼
-                  Reserve Stock
-                         │
-                         ▼
-                  Reservation RESERVED
+```text
+                              API Gateway
+                                   │
+             ┌─────────────────────┼─────────────────────┐
+             │                     │                     │
+             ▼                     ▼                     ▼
+      Product Service        Order Service        Payment Service
+             │                     │                     │
+             │                     │                     │
+             │                     │ ORDER_CREATED      │
+             │                     └──────────┐          │
+             │                                │          │
+             │                                ▼          │
+             │                       ┌──────────────────┐ │
+             │                       │ Inventory Service │ │
+             │                       │      :5016        │ │
+             │                       └────────┬─────────┘ │
+             │                                │           │
+             │                    ┌───────────┴──────────┐│
+             │                    │                      ││
+             │                    ▼                      ▼│
+             │              Inventory Model       Reservation Model
+             │                    │                      │
+             │                    └──────────┬───────────┘
+             │                               │
+             │                               ▼
+             │                           MongoDB
+             │
+             └──────────────────────────────────────────────┐
+                                                            │
+                                                            ▼
+                                                     RabbitMQ
+                                                  ecommerce_events
+                                                            │
+                              ┌─────────────────────────────┼──────────────────────────┐
+                              │                             │                          │
+                              ▼                             ▼                          ▼
+                       Inventory Service              Order Service              Cart Service
+                              │                             │                          │
+                              ▼                             ▼                          ▼
+                         Reservations                 Order State                 Cart Cleanup
+```
