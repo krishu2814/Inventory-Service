@@ -153,6 +153,54 @@ class ReservationService {
     return confirmedReservations;
   }
 
+  async releaseReservationsByOrderId(orderId) {
+    this.validateOrderId(orderId);
+
+    const reservations =
+      await this.reservationRepository.findAllByOrderId(orderId);
+
+    if (!reservations.length) {
+      return [];
+    }
+
+    const releasedReservations = [];
+
+    for (const reservation of reservations) {
+      // Idempotency
+      if (
+        reservation.status === "RELEASED" ||
+        reservation.status === "CANCELLED"
+      ) {
+        releasedReservations.push(this.formatReservation(reservation));
+        continue;
+      }
+
+      if (reservation.status !== "RESERVED") {
+        continue;
+      }
+
+      const inventory = await this.inventoryRepository.releaseStock(
+        reservation.productId,
+        reservation.quantity,
+      );
+
+      if (!inventory) {
+        throw new Error(
+          `Unable to release inventory for product ${reservation.productId}`,
+        );
+      }
+
+      const updatedReservation = await this.reservationRepository.updateStatus(
+        reservation._id,
+        "RELEASED",
+      );
+
+      releasedReservations.push(this.formatReservation(updatedReservation));
+    }
+
+    return releasedReservations;
+  }
+
   async createReservation(data, authorization) {
     this.validateReservationData(data);
 

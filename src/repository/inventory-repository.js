@@ -80,6 +80,10 @@ class InventoryRepository {
       },
     );
   }
+
+  async deleteInventoryByProductId(productId) {
+    return await Inventory.findOneAndDelete({ productId });
+  }
 }
 
 export default InventoryRepository;
