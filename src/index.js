@@ -11,10 +11,13 @@ import ProductDeletedConsumer from "./consumer/product-deleted-consumer.js";
 import PaymentFailedConsumer from "./consumer/payment-failed-consumer.js";
 import ReservationExpiryJob from "./jobs/reservation-expiry-job.js";
 
+import correlationMiddleware from "./middleware/correlation-middleware.js";
+
 const app = express();
 
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
+app.use(correlationMiddleware);
 
 // API routes
 app.use("/api", apiRoutes);

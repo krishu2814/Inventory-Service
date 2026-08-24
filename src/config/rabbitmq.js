@@ -41,12 +41,21 @@ export function getChannel() {
   return channel;
 }
 
-export async function publishEvent(routingKey, data) {
+import crypto from "crypto";
+
+export async function publishEvent(routingKey, data, options = {}) {
   const rabbitChannel = getChannel();
 
   if (!routingKey || typeof routingKey !== "string") {
     throw new Error(`Invalid routing key: ${routingKey}`);
   }
+
+  const correlationId =
+    options.correlationId ||
+    data.correlationId ||
+    `amqp_${crypto.randomUUID()}`;
+
+  data.correlationId = correlationId;
 
   rabbitChannel.publish(
     env.EXCHANGE_NAME,
@@ -55,10 +64,15 @@ export async function publishEvent(routingKey, data) {
     {
       persistent: true,
       contentType: "application/json",
+      correlationId,
+      headers: {
+        "x-correlation-id": correlationId,
+        ...(options.headers || {}),
+      },
     },
   );
 
-  console.log(`Event published: ${routingKey}`);
+  console.log(`[${correlationId}] [Inventory-Service] Event published: ${routingKey}`);
 }
 
 export async function closeRabbitMQ() {
