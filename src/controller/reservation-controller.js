@@ -187,6 +187,29 @@ class ReservationController {
       });
     }
   }
+
+  // CLEANUP EXPIRED RESERVATIONS (MANUAL / TRIGGER)
+  async cleanupExpiredReservations(req, res) {
+    try {
+      const maxAgeMinutes = req.body.maxAgeMinutes !== undefined ? Number(req.body.maxAgeMinutes) : 15;
+      const result = await this.reservationService.cleanupExpiredReservations(maxAgeMinutes);
+
+      return res.status(200).json({
+        success: true,
+        message: `Expired reservations cleanup completed. Released ${result.expiredCount} reservations.`,
+        data: result,
+        err: {},
+      });
+    } catch (error) {
+      console.error("Error during manual expired reservations cleanup:", error);
+      return res.status(500).json({
+        success: false,
+        message: error.message,
+        data: {},
+        err: {},
+      });
+    }
+  }
 }
 
 export default ReservationController;

@@ -8,6 +8,8 @@ import OrderConfirmedConsumer from "./consumer/order-confirmed-consumer.js";
 import OrderCancelledConsumer from "./consumer/order-cancelled-consumer.js";
 import ProductCreatedConsumer from "./consumer/product-created-consumer.js";
 import ProductDeletedConsumer from "./consumer/product-deleted-consumer.js";
+import PaymentFailedConsumer from "./consumer/payment-failed-consumer.js";
+import ReservationExpiryJob from "./jobs/reservation-expiry-job.js";
 
 const app = express();
 
@@ -35,6 +37,10 @@ const setUpAndStartServer = async () => {
   const orderCancelledConsumer = new OrderCancelledConsumer();
   await orderCancelledConsumer.start();
 
+  // Start PAYMENT_FAILED consumer
+  const paymentFailedConsumer = new PaymentFailedConsumer();
+  await paymentFailedConsumer.start();
+
   // Start PRODUCT_CREATED consumer
   const productCreatedConsumer = new ProductCreatedConsumer();
   await productCreatedConsumer.start();
@@ -42,6 +48,10 @@ const setUpAndStartServer = async () => {
   // Start PRODUCT_DELETED consumer
   const productDeletedConsumer = new ProductDeletedConsumer();
   await productDeletedConsumer.start();
+
+  // Start Background Reservation Expiry Cleaner Job
+  const expiryJob = new ReservationExpiryJob();
+  expiryJob.start();
 
   app.listen(env.PORT, () => {
     console.log(`Server is running on port ${env.PORT}`);

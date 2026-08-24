@@ -33,7 +33,7 @@ class ReservationRepository {
       reservationId,
       data,
       {
-        new: true,
+        returnDocument: "after",
         runValidators: true,
       },
     );
@@ -44,10 +44,17 @@ class ReservationRepository {
       reservationId,
       { status },
       {
-        new: true,
+        returnDocument: "after",
         runValidators: true,
       },
     );
+  }
+
+  async findExpiredReservations(olderThanDate) {
+    return await Reservation.find({
+      status: "RESERVED",
+      createdAt: { $lt: olderThanDate },
+    });
   }
 }
 

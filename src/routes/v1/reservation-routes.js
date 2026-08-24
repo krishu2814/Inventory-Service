@@ -47,4 +47,10 @@ router.post(
   reservationController.cancelReservation.bind(reservationController),
 );
 
+// Cleanup expired reservations
+router.post(
+  "/cleanup-expired",
+  reservationController.cleanupExpiredReservations.bind(reservationController),
+);
+
 export default router;

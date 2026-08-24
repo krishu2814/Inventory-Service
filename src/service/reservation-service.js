@@ -436,6 +436,61 @@ class ReservationService {
     return this.formatReservation(updatedReservation);
   }
 
+  async cleanupExpiredReservations(maxAgeMinutes = 15) {
+    const cutoff = new Date(Date.now() - maxAgeMinutes * 60 * 1000);
+    const expired = await this.reservationRepository.findExpiredReservations(cutoff);
+
+    if (!expired || expired.length === 0) {
+      return {
+        expiredCount: 0,
+        releasedReservations: [],
+      };
+    }
+
+    console.log(`[Inventory] Found ${expired.length} expired reservations to clean up (cutoff: ${cutoff.toISOString()})`);
+
+    const releasedReservations = [];
+    const notifiedOrders = new Set();
+
+    for (const reservation of expired) {
+      try {
+        await this.inventoryRepository.releaseStock(
+          reservation.productId,
+          reservation.quantity,
+        );
+
+        const updated = await this.reservationRepository.updateStatus(
+          reservation._id,
+          "RELEASED",
+        );
+
+        releasedReservations.push(this.formatReservation(updated));
+
+        // Emit RESERVATION_EXPIRED for each order only once per cleanup cycle
+        if (!notifiedOrders.has(String(reservation.orderId))) {
+          notifiedOrders.add(String(reservation.orderId));
+
+          await publishEvent("RESERVATION_EXPIRED", {
+            event: "RESERVATION_EXPIRED",
+            orderId: String(reservation.orderId),
+            userId: String(reservation.userId),
+            productId: String(reservation.productId),
+            quantity: reservation.quantity,
+            reason: `Reservation expired after ${maxAgeMinutes} minutes without payment`,
+            timestamp: new Date().toISOString(),
+          });
+        }
+      } catch (err) {
+        console.error(`Failed to release expired reservation ${reservation._id}:`, err.message);
+      }
+    }
+
+    return {
+      expiredCount: releasedReservations.length,
+      releasedReservations,
+    };
+  }
+
   validateReservationData(data) {
     if (!data) {
       throw new Error("Reservation data is required");
